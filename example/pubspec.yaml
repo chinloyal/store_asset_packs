@@ -1,0 +1,41 @@
+name: store_asset_packs_example
+description: "Demonstrates how to use the store_asset_packs plugin."
+publish_to: 'none'
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  store_asset_packs:
+    path: ../
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  # The packs/ folders are NOT listed as Flutter assets: they reach the app
+  # only through the stores (or the debug dev override).
+
+# Read by `dart run store_asset_packs:android|ios|push`.
+store_asset_packs:
+  packs:
+    # Short form: pack name → source folder (relative to this file).
+    fast_pack: packs/fast_pack
+    # Long form, with per-pack overrides.
+    ondemand_pack:
+      source: packs/ondemand_pack
+      android_delivery_type: on-demand
+      ios_download_policy: onDemand
+  android:
+    delivery_type: fast-follow
+  ios:
+    download_policy: prefetch
+    # Also set up Apple-hosted Background Assets (iOS 26+).
+    background_assets: true
