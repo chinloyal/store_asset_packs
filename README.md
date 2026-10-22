@@ -216,7 +216,10 @@ At runtime the plugin picks the backend from Info.plist. On iOS 26+ with
 `BAHasManagedAssetPacks` and `BAUsesAppleHosting`, it uses Background Assets.
 For any pack Background Assets can't deliver, it **falls back to ODR**: App
 Review disables Apple-hosted pre-launch downloads, and unsigned or development
-builds get "No team ID was specified". That's why `odr` should always run, and
+builds get "No team ID was specified". A pack that Background Assets doesn't
+start downloading within 20 seconds (some iOS versions accept the request and
+then never begin) is served by ODR too, the same as after a failure; a pack
+that is downloading, however slowly, is never timed out. That's why `odr` should always run, and
 why ODR stays in the build even when you use Background Assets. Otherwise
 (below iOS 26, or without those keys) it uses ODR.
 
