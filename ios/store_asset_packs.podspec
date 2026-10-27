@@ -4,14 +4,14 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'store_asset_packs'
-  s.version          = '0.0.1'
+  s.version          = '0.1.0'
   s.summary          = 'Store-delivered asset packs: Background Assets and On-Demand Resources.'
   s.description      = <<-DESC
 Store-delivered asset packs for Flutter: Background Assets (iOS 26+) and On-Demand Resources.
                        DESC
-  s.homepage         = 'http://example.com'
-  s.license          = { :file => '../LICENSE' }
-  s.author           = { 'Your Company' => 'email@example.com' }
+  s.homepage         = 'https://github.com/chinloyal/store_asset_packs'
+  s.license          = { :type => 'MIT', :file => '../LICENSE' }
+  s.author           = { 'chinloyal' => 'chinloy@potudo.com' }
   s.source           = { :path => '.' }
   s.source_files = 'store_asset_packs/Sources/store_asset_packs/**/*.swift'
   s.dependency 'Flutter'

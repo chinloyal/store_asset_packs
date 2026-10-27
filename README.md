@@ -1,28 +1,70 @@
-# store_asset_packs
+# store_asset_packs: Play Asset Delivery, Background Assets and On-Demand Resources for Flutter
 
-Store-delivered asset packs for Flutter apps, with one API and identical
-statuses on both platforms:
+[![pub package](https://img.shields.io/pub/v/store_asset_packs.svg)](https://pub.dev/packages/store_asset_packs)
+[![pub points](https://img.shields.io/pub/points/store_asset_packs)](https://pub.dev/packages/store_asset_packs/score)
+[![likes](https://img.shields.io/pub/likes/store_asset_packs)](https://pub.dev/packages/store_asset_packs/score)
+[![platforms](https://img.shields.io/badge/platform-android%20%7C%20ios-blue)](https://pub.dev/packages/store_asset_packs)
+[![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
+**store_asset_packs** is a Flutter plugin for store-delivered asset packs. It
+covers **Google Play Asset Delivery (PAD)** on Android, and **Apple Background
+Assets** (Apple-hosted asset packs) and **On-Demand Resources (ODR)** on iOS,
+with one Dart API and the same download statuses on both platforms.
+
+Use it to keep large game levels, textures, audio, video, ML models or other
+content out of your app binary. Your Android App Bundle (AAB) and your iOS app
+stay small, and Google Play and the App Store host and download the extra
+content for you. You don't need your own CDN or download server.
 
 | Platform | Delivery |
 |---|---|
-| Android | [Play Asset Delivery](https://developer.android.com/guide/playcore/asset-delivery): fast-follow and on-demand packs |
+| Android | [Play Asset Delivery](https://developer.android.com/guide/playcore/asset-delivery): install-time, fast-follow and on-demand asset packs |
 | iOS 26+ | [Background Assets](https://developer.apple.com/documentation/backgroundassets) with Apple-hosted asset packs, falling back to On-Demand Resources |
-| iOS 15–25 | [On-Demand Resources](https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/On_Demand_Resources_Guide/) |
+| iOS 15–25 | [On-Demand Resources](https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/On_Demand_Resources_Guide/) (`NSBundleResourceRequest`) |
 
 A pack is a plain folder in your project, for example `assets/levels/world2/`.
 The same folder feeds every store, and nothing is re-encoded: once the pack is
 on the device, `getPackPath` returns an absolute directory, and the files sit
 under it at their paths relative to the folder.
 
-The package also ships command-line tools that wire the packs into your
-Gradle and Xcode projects, build the Apple-hosted archives, and copy packs
-onto a device for `flutter run`.
+## Features
 
+- **Play Asset Delivery for Flutter:** fast-follow and on-demand asset packs
+  through the Play Asset Delivery library (`AssetPackManager`), including
+  Play's Wi-Fi / cellular data confirmation dialog.
+- **iOS Background Assets:** Apple-hosted, managed asset packs on iOS 26+,
+  with the downloader extension generated for you.
+- **iOS On-Demand Resources:** ODR tags, initial-install and prefetch tags,
+  and the Xcode project setup done for you.
+- **One API on both platforms:** `getStates`, `fetch`, a progress stream
+  (`updates`), and `getPackPath` to read the files.
+- **Setup tools:** `dart run store_asset_packs:android` and `:ios` wire the
+  packs into Gradle (`assetPacks`) and Xcode (asset tags, Info.plist,
+  entitlements, app group), and `:ios package` builds the `.aar` archives
+  for App Store Connect / TestFlight.
+- **Fast iteration:** `dart run store_asset_packs:push` copies packs onto an
+  emulator, a simulator or a debug device, so `flutter run` works without
+  the store.
+- Swift Package Manager and CocoaPods, Kotlin DSL Gradle, AGP 9.
+
+## Contents
+
+- [Installation](#installation)
 - [Dart API](#dart-api)
 - [Setup](#setup)
 - [Local testing](#local-testing)
 - [Store limits](#store-limits)
 - [How it works](#how-it-works)
+- [FAQ](#faq)
+
+## Installation
+
+```bash
+flutter pub add store_asset_packs
+```
+
+Then [declare your packs](#1-declare-the-packs) and run the setup tools for
+[Android](#2-android) and [iOS](#3-ios).
 
 ## Dart API
 
@@ -326,3 +368,40 @@ All figures are current as of October 2026; check the linked pages for changes.
   `updates`, `ensureLocalAvailability` downloads, and the path is
   `url(for: "<pack>")`. BackgroundAssets is weak-linked, so the app still runs
   on iOS 15.
+
+## FAQ
+
+**How do I use Play Asset Delivery in Flutter?**
+Declare the packs in `pubspec.yaml`, run `dart run store_asset_packs:android`,
+build an app bundle with `flutter build appbundle`, and call
+`StoreAssetPacks.fetch` and `getPackPath` from Dart. Google Play hosts the
+packs and delivers them with the app bundle. See [Android setup](#2-android).
+
+**Does it support install-time, fast-follow and on-demand delivery?**
+Yes. All three Play Asset Delivery modes can be set per pack. `getPackPath`
+returns a directory only for fast-follow and on-demand packs, because Play
+keeps install-time packs inside the APK.
+
+**How do I use Apple Background Assets or Apple-hosted asset packs in Flutter?**
+Set `ios.background_assets: true` and run `dart run store_asset_packs:ios`.
+That adds the Info.plist keys, the app group and the downloader extension.
+Then run `dart run store_asset_packs:ios package` and upload the `.aar`
+archives to App Store Connect. See [iOS setup](#3-ios).
+
+**What about On-Demand Resources now that Apple has deprecated it?**
+ODR still works on every iOS version that has it. The plugin uses Background
+Assets on iOS 26+ and ODR on earlier versions, or when Background Assets
+fails, so the same packs reach every supported device.
+
+**Can I test asset packs without uploading to the stores?**
+Yes. Use `bundletool --local-testing` on Android, Debug-embedded ODR on iOS,
+Apple's `ba-serve` mock server for Background Assets, or `push` for any debug
+build. See [Local testing](#local-testing).
+
+**How big can an asset pack be?**
+On Google Play, up to 1.5 GB per pack. On iOS 18+, up to 8 GB per ODR pack.
+See [Store limits](#store-limits).
+
+## License
+
+MIT. See [LICENSE](LICENSE).

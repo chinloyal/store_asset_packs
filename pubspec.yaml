@@ -1,7 +1,16 @@
 name: store_asset_packs
-description: "Store-delivered asset packs for Flutter: Play Asset Delivery on Android, Background Assets and On-Demand Resources on iOS, with setup and dev tooling."
+description: "Flutter Play Asset Delivery (Android) plus Background Assets and On-Demand Resources (iOS): download large asset packs from Google Play and the App Store."
 version: 0.1.0
+homepage: https://github.com/chinloyal/store_asset_packs
 repository: https://github.com/chinloyal/store_asset_packs
+issue_tracker: https://github.com/chinloyal/store_asset_packs/issues
+
+topics:
+  - play-asset-delivery
+  - background-assets
+  - on-demand-resources
+  - asset-packs
+  - asset-delivery
 
 environment:
   sdk: ^3.12.0
