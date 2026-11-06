@@ -4,7 +4,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'store_asset_packs'
-  s.version          = '0.1.0'
+  s.version          = '1.0.0'
   s.summary          = 'Store-delivered asset packs: Background Assets and On-Demand Resources.'
   s.description      = <<-DESC
 Store-delivered asset packs for Flutter: Background Assets (iOS 26+) and On-Demand Resources.

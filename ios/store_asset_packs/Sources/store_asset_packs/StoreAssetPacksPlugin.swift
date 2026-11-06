@@ -23,6 +23,39 @@ func packState(
   return state
 }
 
+/// Runs [operation], or throws a timeout error (`NSURLErrorTimedOut`) after
+/// [seconds]. It answers at the deadline even if [operation] ignores being
+/// cancelled, which a task group can't promise: a group waits for every
+/// child before it returns.
+func withTimeout<T>(
+  _ seconds: TimeInterval, _ operation: @escaping () async throws -> T
+) async throws -> T {
+  let lock = NSLock()
+  var done = false
+  func claim() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    if done { return false }
+    done = true
+    return true
+  }
+  return try await withCheckedThrowingContinuation { continuation in
+    let task = Task {
+      do {
+        let value = try await operation()
+        if claim() { continuation.resume(returning: value) }
+      } catch {
+        if claim() { continuation.resume(throwing: error) }
+      }
+    }
+    DispatchQueue.global().asyncAfter(deadline: .now() + seconds) {
+      guard claim() else { return }
+      task.cancel()
+      continuation.resume(throwing: NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut))
+    }
+  }
+}
+
 /// A delivery mechanism: On-Demand Resources or Background Assets. Callbacks
 /// may arrive on any thread; the plugin hops to the main thread.
 protocol PackBackend: AnyObject {
@@ -145,13 +178,29 @@ final class FallbackBackend: PackBackend {
   /// Packs Background Assets has shown to be alive since their last fetch:
   /// downloading or completed. Guarded by [lock].
   private var started: Set<String> = []
+  /// Packs Background Assets has called complete. Guarded by [lock].
+  private var completed: Set<String> = []
+  /// When each pack was last asked for, and when Background Assets last
+  /// showed it moving. Guarded by [lock].
+  private var requestedAt: [String: Date] = [:]
+  private var heardAt: [String: Date] = [:]
+  /// Packs with a [watch] running. Guarded by [lock].
+  private var watching: Set<String> = []
 
   /// How long Background Assets gets to start a requested pack. Some OS
   /// versions (seen on iOS 27) accept the request and then never start, or
   /// fail, so `failed` alone never triggers the fallback and the app waits
-  /// forever. Past this, the pack is served by ODR like after a failure. A
-  /// pack that has begun downloading is never timed out, however slowly.
+  /// forever. Past this, the pack is served by ODR like after a failure.
   static let backgroundAssetsStartTimeout: TimeInterval = 20
+
+  /// How long a pack Background Assets has started may go without moving
+  /// before it's served by ODR instead. A download that pauses (the system
+  /// holds it back) or stops reporting otherwise kept the app waiting for
+  /// good; one that keeps moving is never cut off, however slowly.
+  static let backgroundAssetsStallTimeout: TimeInterval = 45
+
+  /// How often [watch] looks at a pack.
+  static let watchInterval: TimeInterval = 5
 
   init(primary: PackBackend, fallback: PackBackend) {
     self.primary = primary
@@ -175,6 +224,14 @@ final class FallbackBackend: PackBackend {
     if inserted { fallback.fetch([name]) { _ in } }
   }
 
+  /// Moves [name] to ODR without fetching it: the app's next fetch goes
+  /// there.
+  private func markFallenBack(_ name: String) {
+    lock.lock()
+    fellBack.insert(name)
+    lock.unlock()
+  }
+
   private func primaryUpdate(_ state: PackState) {
     let name = state["name"] as! String
     if hasFallenBack(name) { return }
@@ -186,36 +243,64 @@ final class FallbackBackend: PackBackend {
     if status == "downloading" || status == "completed" {
       lock.lock()
       started.insert(name)
+      heardAt[name] = Date()
+      if status == "completed" { completed.insert(name) }
       lock.unlock()
     }
     onUpdate?(state)
   }
 
-  /// Gives Background Assets [backgroundAssetsStartTimeout] to start [pack],
-  /// then falls back to ODR if it hasn't. The pack's state is checked once
-  /// more at the deadline, since a pack that was already installed reports
-  /// nothing at all and must not be fetched again.
+  /// Watches a requested [pack] until Background Assets completes it, and
+  /// moves it to ODR if Background Assets doesn't start it within
+  /// [backgroundAssetsStartTimeout] or stops moving it for
+  /// [backgroundAssetsStallTimeout]. It decides from what Background Assets
+  /// has reported, never by asking it again: the question could hang just
+  /// as the request did.
   private func watch(_ pack: String) {
+    lock.lock()
+    let already = !watching.insert(pack).inserted
+    lock.unlock()
+    if already { return }
+    check(pack)
+  }
+
+  private func check(_ pack: String) {
     DispatchQueue.global().asyncAfter(
-      deadline: .now() + FallbackBackend.backgroundAssetsStartTimeout
+      deadline: .now() + FallbackBackend.watchInterval
     ) { [weak self] in
       guard let self = self else { return }
+      let now = Date()
       self.lock.lock()
-      let settled = self.started.contains(pack) || self.fellBack.contains(pack)
+      let done = self.fellBack.contains(pack) || self.completed.contains(pack)
+      let started = self.started.contains(pack)
+      let since = started ? self.heardAt[pack] : self.requestedAt[pack]
+      let limit =
+        started
+        ? FallbackBackend.backgroundAssetsStallTimeout
+        : FallbackBackend.backgroundAssetsStartTimeout
+      let late = now.timeIntervalSince(since ?? now) > limit
+      if done || late { self.watching.remove(pack) }
       self.lock.unlock()
-      if settled { return }
-      self.primary.states([pack]) { [weak self] states in
-        guard let self = self else { return }
-        let status = states[pack]?["status"] as? String
-        if status == "downloading" || status == "completed" { return }
-        self.fallBack(pack)
-      }
+      if done { return }
+      if late { return self.fallBack(pack) }
+      self.check(pack)
     }
   }
 
   func states(_ packs: [String], completion: @escaping ([String: PackState]) -> Void) {
     primary.states(packs) { [weak self] primaryStates in
       guard let self = self else { return completion(primaryStates) }
+      for (pack, state) in primaryStates {
+        switch state["status"] as? String {
+        case "completed":
+          self.lock.lock()
+          self.completed.insert(pack)
+          self.lock.unlock()
+        // Background Assets can't even look it up: ODR serves it from now on.
+        case "failed": self.markFallenBack(pack)
+        default: break
+        }
+      }
       // Ask ODR about every pack Background Assets doesn't have.
       let others = packs.filter {
         self.hasFallenBack($0) || primaryStates[$0]?["status"] as? String != "completed"
@@ -243,18 +328,32 @@ final class FallbackBackend: PackBackend {
     if ba.isEmpty { return completion(nil) }
     // A new request starts a new deadline, even for a pack that was alive
     // before and has since been cancelled or failed.
+    let now = Date()
     lock.lock()
     started.subtract(ba)
+    for pack in ba { requestedAt[pack] = now }
     lock.unlock()
     ba.forEach(watch)
     primary.fetch(ba, completion: completion)
   }
 
+  /// Background Assets' copy first, then ODR's. A pack Background Assets
+  /// calls complete but has no folder for (its archive not laid out as
+  /// expected, say) is fetched from ODR, so the app isn't left with a
+  /// "complete" pack it can never open.
   func path(_ pack: String, completion: @escaping (String?) -> Void) {
     primary.path(pack) { [weak self] path in
       if let path = path { return completion(path) }
       guard let self = self else { return completion(nil) }
-      self.fallback.path(pack, completion: completion)
+      self.fallback.path(pack) { [weak self] odrPath in
+        if odrPath == nil, let self = self {
+          self.lock.lock()
+          let lost = self.completed.contains(pack)
+          self.lock.unlock()
+          if lost { self.fallBack(pack) }
+        }
+        completion(odrPath)
+      }
     }
   }
 

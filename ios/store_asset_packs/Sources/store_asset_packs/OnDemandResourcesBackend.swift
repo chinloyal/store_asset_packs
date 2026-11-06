@@ -85,9 +85,15 @@ final class OnDemandResourcesBackend: NSObject, PackBackend {
 
   func fetch(_ packs: [String], completion: @escaping (Error?) -> Void) {
     for pack in packs {
-      let busy = locked { accessing[pack] != nil || loading[pack] != nil }
-      if busy { continue }
+      let (isAccessing, isLoading) = locked { (accessing[pack] != nil, loading[pack] != nil) }
+      // Already here: said so, since a fetch that falls back from Background
+      // Assets is waiting to hear.
+      if isAccessing { report(packState(pack, "completed")) }
+      if isAccessing || isLoading { continue }
       let request = NSBundleResourceRequest(tags: [pack])
+      // The app is waiting on it: download now, not when the system gets
+      // round to it.
+      request.loadingPriority = NSBundleResourceRequestLoadingPriorityUrgent
       locked { loading[pack] = request }
       report(packState(pack, "pending"))
       let observation = request.progress.observe(\.fractionCompleted) { [weak self] progress, _ in

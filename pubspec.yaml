@@ -1,6 +1,6 @@
 name: store_asset_packs
 description: "Flutter Play Asset Delivery (Android) plus Background Assets and On-Demand Resources (iOS): download large asset packs from Google Play and the App Store."
-version: 0.1.0
+version: 1.0.0
 homepage: https://github.com/chinloyal/store_asset_packs
 repository: https://github.com/chinloyal/store_asset_packs
 issue_tracker: https://github.com/chinloyal/store_asset_packs/issues

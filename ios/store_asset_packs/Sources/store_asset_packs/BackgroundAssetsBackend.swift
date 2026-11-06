@@ -76,54 +76,92 @@ import Foundation
       locked { sizes[pack.id] = Int64(pack.downloadSize) }
     }
 
+    /// How long a look-up of a pack on Apple's servers may take. Without a
+    /// limit, a look-up that never answers (seen on App Review's devices,
+    /// where Apple-hosted downloads are off) held up `getStates` and `fetch`
+    /// for good, so the app never even reached the fallback.
+    static let lookupTimeout: TimeInterval = 15
+
+    /// The pack's metadata, or a timeout error past [lookupTimeout].
+    private func lookUp(_ id: String) async throws -> AssetPack {
+      let manager = self.manager
+      let pack = try await withTimeout(BackgroundAssetsBackend.lookupTimeout) {
+        try await manager.assetPack(withID: id)
+      }
+      remember(pack)
+      return pack
+    }
+
     private func isAvailable(_ id: String) async -> Bool {
       if #available(iOS 26.4, *) {
         return manager.assetPackIsAvailableLocally(withID: id)
       }
-      let status = try? await manager.status(ofAssetPackWithID: id)
+      // Bounded like a look-up: an answer that never comes means "not here",
+      // and the fallback takes it from there.
+      let manager = self.manager
+      let status = try? await withTimeout(BackgroundAssetsBackend.lookupTimeout) {
+        try await manager.status(ofAssetPackWithID: id)
+      }
       return status?.contains(.downloaded) ?? false
     }
 
     func states(_ packs: [String], completion: @escaping ([String: PackState]) -> Void) {
       Task {
-        var result: [String: PackState] = [:]
-        for id in packs {
-          let total = locked { sizes[id] } ?? 0
-          if await isAvailable(id) {
-            result[id] = packState(id, "completed", bytesDownloaded: total, totalBytes: total)
-            continue
-          }
-          if let previous = locked({ last[id] }),
-            let status = previous["status"] as? String, status != "completed"
-          {
-            result[id] = previous
-            continue
-          }
-          // Not on the device: look up its size (this may ask the server).
-          do {
-            let pack = try await manager.assetPack(withID: id)
-            remember(pack)
-            result[id] = packState(id, "notInstalled", totalBytes: Int64(pack.downloadSize))
-          } catch {
-            result[id] = packState(id, "failed", error: error)
-          }
+        // Every pack at once: one at a time, a slow server made the answer
+        // take a look-up's time for every pack.
+        let result = await withTaskGroup(of: (String, PackState).self) { group in
+          for id in packs { group.addTask { (id, await self.state(of: id)) } }
+          var result: [String: PackState] = [:]
+          for await (id, state) in group { result[id] = state }
+          return result
         }
         completion(result)
       }
     }
 
+    private func state(of id: String) async -> PackState {
+      let total = locked { sizes[id] } ?? 0
+      if await isAvailable(id) {
+        return packState(id, "completed", bytesDownloaded: total, totalBytes: total)
+      }
+      if let previous = locked({ last[id] }),
+        let status = previous["status"] as? String, status != "completed"
+      {
+        return previous
+      }
+      // Not on the device: look up its size (this may ask the server).
+      do {
+        let pack = try await lookUp(id)
+        return packState(id, "notInstalled", totalBytes: Int64(pack.downloadSize))
+      } catch {
+        return packState(id, "failed", error: error)
+      }
+    }
+
     func fetch(_ packs: [String], completion: @escaping (Error?) -> Void) {
       Task {
-        var started: [(String, AssetPack)] = []
-        for id in packs {
-          if await isAvailable(id) { continue }
-          do {
-            let pack = try await manager.assetPack(withID: id)
-            remember(pack)
-            started.append((id, pack))
-          } catch {
-            report(packState(id, "failed", error: error))
+        let started = await withTaskGroup(of: (String, AssetPack)?.self) { group in
+          for id in packs {
+            group.addTask {
+              // Already here: said so, since nothing else will report it
+              // and the fallback's watch waits to hear.
+              if await self.isAvailable(id) {
+                let total = self.locked { self.sizes[id] } ?? 0
+                self.report(
+                  packState(id, "completed", bytesDownloaded: total, totalBytes: total))
+                return nil
+              }
+              do {
+                return (id, try await self.lookUp(id))
+              } catch {
+                self.report(packState(id, "failed", error: error))
+                return nil
+              }
+            }
           }
+          var started: [(String, AssetPack)] = []
+          for await entry in group { if let entry = entry { started.append(entry) } }
+          return started
         }
         // The request is made once each pack is looked up; the downloads
         // themselves report through statusUpdates.
